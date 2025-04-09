@@ -1,5 +1,6 @@
 import sys
 import yaml
+import os
 
 import enum
 import abc
@@ -40,18 +41,20 @@ class RemdisState:
 class RemdisModule:
     def __init__(self,
                  config_filename='../config/config.yaml',
+                 api_config_filename='../config/api_config.yaml',
                  host='localhost',
                  pub_exchanges=[],
                  sub_exchanges=[]):
 
         self.config_filename = config_filename
+        self.api_config_filename = api_config_filename
         self.pub_exchanges = pub_exchanges
         self.sub_exchanges = sub_exchanges
         self.host = host
         self._is_running = False
 
         # 設定ファイルの読み込み
-        self.config = self.load_config(self.config_filename)
+        self.config = self.load_configs(self.config_filename, self.api_config_filename)
 
         # 送信チャネル作成
         self.pub_connections = {}
@@ -121,7 +124,31 @@ class RemdisModule:
         if flush:
             sys.stdout.flush()
 
-    # YAML形式の設定ファイル読み込み関数
+    # 設定ファイル読み込み関数 (config.yamlとapi_config.yamlの両方を読み込む)
+    def load_configs(self, config_filename, api_config_filename):
+        # 基本設定を読み込む
+        with open(config_filename, encoding='utf-8') as f:
+            config = yaml.safe_load(f)
+        
+        # API設定が存在すれば読み込み、マージする
+        if os.path.exists(api_config_filename):
+            try:
+                with open(api_config_filename, encoding='utf-8') as f:
+                    api_config = yaml.safe_load(f)
+                
+                # 設定のマージ
+                if api_config:
+                    for section, values in api_config.items():
+                        if section in config:
+                            config[section].update(values)
+                        else:
+                            config[section] = values
+            except Exception as e:
+                sys.stderr.write(f"Warning: Failed to load API config from {api_config_filename}: {e}\n")
+        
+        return config
+
+    # 以前の設定ファイル読み込み関数 (下位互換性のため残す)
     def load_config(self, config_filename):
         with open(config_filename, encoding='utf-8') as f:
             config = yaml.safe_load(f)

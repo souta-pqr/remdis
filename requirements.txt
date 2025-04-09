@@ -67,7 +67,7 @@ PyAudio==0.2.14
 pycparser==2.21
 pydantic==2.6.1
 pydantic_core==2.16.2
-pyopenjtalk==0.3.3
+# pyopenjtalk==0.3.3
 pyparsing==3.1.1
 PySocks==1.7.1
 pysptk==0.2.2
