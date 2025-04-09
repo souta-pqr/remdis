@@ -1,0 +1,39 @@
+# Python関連の一般的な除外ファイル
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 環境設定
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+*.swp
+
+# APIキーや機密情報を含むファイル
+config/api_config.yaml
+config/*.json
+
+# その他のプロジェクト固有の除外ファイル
+*.log
+.DS_Store
