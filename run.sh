@@ -1,5 +1,13 @@
 #!/bin/bash
 
+# エンコーディング設定
+export PYTHONIOENCODING=utf-8
+
+# Windowsの場合、コマンドプロンプトのコードページをUTF-8に設定
+if [ "$OSTYPE" = "msys" ] || [ "$OSTYPE" = "win32" ] || [[ "$OSTYPE" == "cygwin"* ]]; then
+  chcp.com 65001 > /dev/null 2>&1
+fi
+
 # 明示的にAnacondaのPythonを指定
 CONDA_PATH="/c/Users/borik/Anaconda3"
 PYTHON="$CONDA_PATH/envs/remdis/python.exe"
@@ -19,27 +27,32 @@ echo "Using Python: $PYTHON"
 echo "Python version: $($PYTHON --version 2>&1)"
 echo "Current directory: $(pwd)"
 
-# Start all components with logging
+# Start input.py with logging
 echo "Starting input.py..."
 $PYTHON input.py > input.log 2>&1 &
 PID_INPUT=$!
 
+# Start text_vap.py with logging
 echo "Starting text_vap.py..."
 $PYTHON text_vap.py > text_vap.log 2>&1 &
 PID_TEXT_VAP=$!
 
+# Start asr.py with output displayed in terminal
 echo "Starting asr.py..."
-$PYTHON asr.py > asr.log 2>&1 &
+$PYTHON asr.py &
 PID_ASR=$!
 
+# Start dialogue.py with output displayed in terminal
 echo "Starting dialogue.py..."
-$PYTHON dialogue.py > dialogue.log 2>&1 &
+$PYTHON dialogue.py &
 PID_DIALOGUE=$!
 
+# Start tts.py with output displayed in terminal
 echo "Starting tts.py..."
-$PYTHON tts.py > tts.log 2>&1 &
+$PYTHON tts.py &
 PID_TTS=$!
 
+# Start output.py with logging
 echo "Starting output.py..."
 $PYTHON output.py > output.log 2>&1 &
 PID_OUTPUT=$!
