@@ -1,0 +1,5 @@
+ASR:
+  json_key: "path/to/your/google-credentials.json"
+
+ChatGPT:
+  api_key: "your-api-key"
