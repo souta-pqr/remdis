@@ -56,62 +56,39 @@ class ResponseGenerator:
             stream=True
         )
     
-    # Dialogueのsend_response関数で呼び出され，応答の断片を順次返す
+    # Dialogueのsend_response関数で呼び出され，応答全体を一括で返し、/以降のラベルをパースする
     def __next__(self):
-        # 引数（例: '1_喜び,6_会釈'）をパースして，expressionとactionを取得
-        def _parse_split(split):
+        def _parse_label(label_str):
+            # 例: '0_平静,2_うなずく' → {"expression": ..., "action": ...}
             expression = MMDAgentEXLabel.id2expression[0]
             action = MMDAgentEXLabel.id2action[0]
+            if "," in label_str:
+                expr_part, act_part = label_str.split(",", 1)
+                expr_id = expr_part.split("_")[0]
+                act_id = act_part.split("_")[0]
+                expr_id = int(expr_id) if expr_id.isdigit() else 0
+                act_id = int(act_id) if act_id.isdigit() else 0
+                expression = MMDAgentEXLabel.id2expression.get(expr_id, expression)
+                action = MMDAgentEXLabel.id2action.get(act_id, action)
+            return {"expression": expression, "action": action}
 
-            # expression/actionを取得
-            if "," in split:
-                expression, action = split.split(",", 1)
-
-                expression = expression.split("_")[0]
-                expression = int(expression) if expression.isdigit() else 0
-                expression = MMDAgentEXLabel.id2expression[expression]
-
-                action = action.split("_")[0]
-                action = int(action) if action.isdigit() else 0
-                action = MMDAgentEXLabel.id2action[action]
-
-            return {
-                "expression": expression,
-                "action": action
-            }
-
-        # ChatGPTの応答を順次パースして返す
+        # ChatGPTの応答をすべて結合
         for chunk in self.response:
             chunk_message = chunk['choices'][0]['delta']
-
             if 'content' in chunk_message.keys():
-                new_token = chunk_message.get('content')
-
-                # 応答の断片を追加
-                if new_token != "/":
-                    self.response_fragment += new_token
-
-                # 句読点で応答を分割
-                splits = self.punctuation_pattern.split(self.response_fragment, 1)
-
-                # 次のループのために残りの断片を保持
-                self.response_fragment = splits[-1]
-
-                # 句読点が存在していた場合は1つ目の断片を返す
-                if len(splits) == 2 or new_token == "/":
-                    if splits[0]:
-                        return {"phrase": splits[0]}
-                
-                # 応答の最後が来た場合は残りの断片を返す
-                if new_token == "/":
-                    if self.response_fragment:
-                        return {"phrase": self.response_fragment}
-                    self.response_fragment = ''
+                self.response_fragment += chunk_message.get('content')
+        # 応答全体を返す
+        if self.response_fragment:
+            result = self.response_fragment
+            self.response_fragment = ''
+            # '/' で発話とラベルを分割
+            if '/' in result:
+                phrase, label = result.rsplit('/', 1)
+                label = label.strip()
+                label_info = _parse_label(label)
+                return {"phrase": phrase.strip(), **label_info}
             else:
-                # ChatGPTの応答が完了した場合は残りの断片をパースして返す
-                if self.response_fragment:
-                    return _parse_split(self.response_fragment)
-
+                return {"phrase": result.strip()}
         raise StopIteration
     
     # ResponseGeneratorをイテレータ化
