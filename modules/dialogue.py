@@ -134,8 +134,8 @@ class Dialogue(RemdisModule):
                 # ユーザ発話終端の処理
                 if input_iu['update_type'] == RemdisUpdateType.COMMIT:
                     # ASR_COMMITはユーザ発話が前のシステム発話より時間的に後になる場合だけ発出
-                    if self.system_utterance_end_time < input_iu['timestamp']:
-                        self.event_queue.put('ASR_COMMIT')
+                    # if self.system_utterance_end_time < input_iu['timestamp']:
+                    #     self.event_queue.put('ASR_COMMIT')
                     iu_memory = []
 
     # 対話状態を管理
@@ -166,8 +166,8 @@ class Dialogue(RemdisModule):
                     self.send_backchannel()
                 if event == 'SYSTEM_TAKE_TURN':
                     self.send_response()
-                if event == 'ASR_COMMIT':
-                    self.send_response()
+                # if event == 'ASR_COMMIT':
+                #     self.send_response()
 
     # 表情・感情を管理
     def emo_act_management(self):

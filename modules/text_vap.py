@@ -188,9 +188,15 @@ class TextVAP(RemdisModule):
 
                 # 応答を確定させるかどうかの判定
                 elif current_completion_line.startswith('d'):
-                    triggered = self.parse_line_for_text_vap(current_completion_line)
+                    # triggered = self.parse_line_for_text_vap(current_completion_line)
+                    # d の値を抽出してログ出力
+                    text_vap_completion = current_completion_line.strip().split(':')[-1]
+                    text_vap_score = int(text_vap_completion) if text_vap_completion.isdigit() else 0
+                    triggered = text_vap_score >= self.min_text_vap_threshold
+                    # 常にログを出力（閾値を超えた場合も超えなかった場合も）
+                    self.log(f"***** TEXT_VAP SCORE: query='{query}' score={text_vap_score} threshold={self.min_text_vap_threshold} triggered={triggered} line='{current_completion_line}' *****")
                     if triggered:
-                        self.log(f"***** TEXT_VAP: {query=} {current_completion_line=} *****")
+                        # self.log(f"***** TEXT_VAP: {query=} {current_completion_line=} *****")
                         self.send_system_take_turn()
 
                 current_completion_line = ""
