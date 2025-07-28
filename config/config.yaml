@@ -57,3 +57,4 @@ AOUT:
  sample_rate: 16000 # Hz
  sample_width: 2 # Bytes
  num_channel: 1
+ 
