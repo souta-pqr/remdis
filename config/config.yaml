@@ -21,6 +21,7 @@ DIALOGUE:
  response_generation_timeout: 3.0 # sec
  response_generation_interval: 3
  max_silence_time: 5.0 # sec
+ use_rag: true # Use RAG for response generation
 
 ChatGPT:
  api_key: <enter your API key> # Will be overridden by api_config.yaml
@@ -57,4 +58,17 @@ AOUT:
  sample_rate: 16000 # Hz
  sample_width: 2 # Bytes
  num_channel: 1
- 
+
+# RAG (Retrieval-Augmented Generation) configuration
+RAG:
+ enable: true
+ vector_db_path: "./data/chromadb"
+ embedding_model: "text-embedding-ada-002"
+ chunk_size: 512
+ top_k: 5
+ confidence_threshold: 0.7
+
+DATA_SOURCE:
+ fujielab_website: "https://www.fujielab.org/"
+ update_interval_hours: 24
+ cache_duration_hours: 6
