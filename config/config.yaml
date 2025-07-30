@@ -25,13 +25,13 @@ DIALOGUE:
 
 ChatGPT:
  api_key: <enter your API key> # Will be overridden by api_config.yaml
- max_tokens: 128
+ max_tokens: 64
  max_message_num_in_context: 4
  response_generation_model: "gpt-4.1-nano-2025-04-14"
  text_vap_model: "gpt-4.1-nano-2025-04-14"
  prompts:
   BC: prompt/text_vap.txt
-  RESP: prompt/response.txt
+  RESP: prompt/rag_system.txt
   TO: prompt/time_out.txt
 
 TEXT_VAP:

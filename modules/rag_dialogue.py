@@ -26,7 +26,7 @@ except ImportError:
             
             # 収集されたウェブデータ用のストレージ
             self.web_documents = []
-            
+
         def retrieve(self, query):
             if not query or query.strip() == '':
                 return {"level": 3, "type": "general", "content": "質問が空です", "confidence": 0.1}
@@ -119,7 +119,11 @@ except ImportError:
                 'basic_knowledge': len(self.knowledge_base)
             }
 
-
+try:
+    from rag_llm import RAGResponseChatGPT
+except ImportError:
+    print("Warning: RAGResponseChatGPT not available")
+    RAGResponseChatGPT = None
 
 
 # --- RemdisModule継承でtin/toutと連携できるRAG対話モジュール ---
@@ -163,14 +167,20 @@ class RAGDialogue(RemdisModule):
         # 基本的な対話機能で必要な属性（フォールバック用）
         try:
             # プロンプト設定ファイルからの読み込み
-            from prompt.util import load_prompts
             prompt_dict = self.config.get('ChatGPT', {}).get('prompts', {})
+            print(f"[DEBUG] 設定からのプロンプト辞書: {prompt_dict}")
             if prompt_dict:
-                self.prompts = load_prompts(prompt_dict)
+                self.prompts = self._load_prompts(prompt_dict)
+                print(f"[DEBUG] プロンプト設定: {list(self.prompts.keys())}")
+                print(f"[DEBUG] RESPプロンプトの長さ: {len(self.prompts.get('RESP', ''))}")
             else:
-                self.prompts = {'RESP': 'あなたは藤江研究室の案内AIです。', 'TO': '何かご質問はありますか？'}
-        except ImportError:
-            self.prompts = {'RESP': 'あなたは藤江研究室の案内AIです。', 'TO': '何かご質問はありますか？'}
+                self.prompts = {'RESP': '30文字以内で簡潔に回答してください。', 'TO': 'ご質問はありますか？'}
+                print("[DEBUG] デフォルトプロンプトを使用")
+        except Exception as e:
+            print(f"[DEBUG] プロンプト読み込みエラー: {e}")
+            import traceback
+            traceback.print_exc()
+            self.prompts = {'RESP': '30文字以内で簡潔に回答してください。', 'TO': 'ご質問はありますか？'}
         
         self.dialogue_history = []
         self.history_length = self.config.get('DIALOGUE', {}).get('history_length', 10)
@@ -194,12 +204,147 @@ class RAGDialogue(RemdisModule):
             'concat_ius_body': lambda self, ius: ''.join([iu.get('body', '') for iu in ius])
         })()
         
+        # RAG関連の属性を初期化
+        self.rag_response_chatgpt = None
+        
         # RAGコンポーネントの初期化
         if self.rag_enabled:
+            print("[DEBUG] RAGが有効化されています。コンポーネント初期化を開始...")
             self._initialize_rag_components()
+        else:
+            print("[DEBUG] RAGが無効化されています")
+    
+    def _load_prompts(self, prompt_dict):
+        """設定ファイルからプロンプトを読み込む"""
+        import os
+        prompts = {}
+        
+        print(f"[DEBUG] _load_prompts開始: {prompt_dict}")
+        
+        for key, filepath in prompt_dict.items():
+            try:
+                print(f"[DEBUG] 処理中のプロンプト: {key} = {filepath}")
+                
+                # ファイルパスを解決
+                if not os.path.isabs(filepath):
+                    # 相対パスの場合、modulesディレクトリから見た相対パス
+                    module_dir = os.path.dirname(__file__)
+                    filepath = os.path.join(module_dir, filepath)
+                
+                print(f"[DEBUG] 解決されたパス: {filepath}")
+                
+                # ファイルが存在するかチェック
+                if os.path.exists(filepath):
+                    with open(filepath, 'r', encoding='utf-8') as f:
+                        content = f.read().strip()
+                        prompts[key] = content
+                    print(f"プロンプト '{key}' を読み込みました: {filepath} (長さ: {len(content)})")
+                else:
+                    print(f"プロンプトファイルが見つかりません: {filepath}")
+                    prompts[key] = self._get_default_prompt(key)
+                    print(f"[DEBUG] デフォルトプロンプトを使用: {key}")
+            except Exception as e:
+                print(f"プロンプト '{key}' の読み込みに失敗: {e}")
+                import traceback
+                traceback.print_exc()
+                prompts[key] = self._get_default_prompt(key)
+        
+        print(f"[DEBUG] _load_prompts完了: {list(prompts.keys())}")
+        return prompts
+    
+    def _get_default_prompt(self, key):
+        """デフォルトプロンプトを取得"""
+        defaults = {
+            'RESP': 'あなたは藤江研究室のAIです。30文字以内で簡潔に回答してください。',
+            'TO': 'ご質問をどうぞ。',
+            'BC': 'うなずいてください。'
+        }
+        return defaults.get(key, '簡潔に回答してください。')
+        
+    def _initialize_rag_components(self):
+        """RAG関連コンポーネントを初期化"""
+        # RAG用ChatGPT応答生成器の初期化
+        try:
+            print(f"[DEBUG] RAGResponseChatGPT初期化開始: {RAGResponseChatGPT is not None}")
+            if RAGResponseChatGPT:
+                print(f"[DEBUG] RAGResponseChatGPT初期化パラメータ:")
+                print(f"  - config: {type(self.config)}")
+                print(f"  - prompts: {type(self.prompts)}")
+                print(f"  - rag_retriever: {type(self.rag_retriever)}")
+                
+                self.rag_response_chatgpt = RAGResponseChatGPT(self.config, self.prompts, self.rag_retriever)
+                print("RAG用ChatGPT応答生成器を初期化しました")
+            else:
+                print("RAGResponseChatGPTクラスが利用できません")
+                self.rag_response_chatgpt = None
+        except Exception as e:
+            print(f"RAG用ChatGPT応答生成器の初期化に失敗: {e}")
+            import traceback
+            traceback.print_exc()
+            self.rag_response_chatgpt = None
+        
+        # RAG機能の有効/無効チェック
+        try:
+            if not self.rag_enabled:
+                print("RAG機能は無効化されています")
+                return
+            
+            # RAG検索エンジン初期化（既に初期化済み）
+            print("RAG検索エンジンが利用可能です")
+            
+            # 初期データ収集（バックグラウンドで実行）
+            if self.data_collector:
+                self._start_initial_data_collection()
+            
+            print("RAG機能を有効化しました")
+            
+        except Exception as e:
+            print(f"RAG初期化エラー: {e}")
+            self.rag_enabled = False
         
         self._is_running = True
         print("RAG対話Remdisモジュールを初期化しました")
+    
+    def _start_initial_data_collection(self):
+        """初期データ収集をバックグラウンドで開始"""
+        def collect_initial_data():
+            try:
+                print("初期データ収集を開始...")
+                print("藤江研究室のウェブサイトから情報を収集しています...")
+                
+                # ウェブサイトからデータを収集
+                documents = self.data_collector.collect_website_data(max_pages=10)
+                
+                if documents and self.rag_retriever:
+                    # ChromaDBに文書を追加
+                    success = self.rag_retriever.add_documents(documents)
+                    if success:
+                        self.rag_stats['knowledge_base_size'] = len(documents)
+                        print(f"初期データ収集完了: {len(documents)}件の文書を知識ベースに追加")
+                        
+                        # 収集した文書のサンプルを表示
+                        print("収集した文書の例:")
+                        for i, doc in enumerate(documents[:3]):  # 最初の3件のみ
+                            title = doc.get('title', '無題')
+                            source = doc.get('source', 'unknown')
+                            content_preview = doc.get('content', '')[:100] + '...'
+                            print(f"  {i+1}. {title} (from: {source})")
+                            print(f"      {content_preview}")
+                        
+                        print("RAGシステムで藤江研究室のウェブサイト情報が利用可能になりました。")
+                    else:
+                        print("文書の追加に失敗しました。基本知識ベースを使用します。")
+                else:
+                    print("初期データ収集: 有効な文書が見つかりませんでした")
+                    print("モック知識ベースを使用します")
+                        
+            except Exception as e:
+                print(f"初期データ収集エラー: {e}")
+                print("モック知識ベースを使用します")
+        
+        # バックグラウンドスレッドで実行
+        thread = threading.Thread(target=collect_initial_data, daemon=True)
+        thread.start()
 
     def callback_asr(self, ch, method, properties, in_msg):
         iu = self.parse_msg(in_msg)
@@ -220,30 +365,78 @@ class RAGDialogue(RemdisModule):
                 print(f"処理する発話: '{user_utt}'")
                 
                 if user_utt:
-                    # RAG検索実行
-                    start_time = time.time()
-                    rag_result = self.rag_retriever.retrieve(user_utt)
-                    response_time = time.time() - start_time
-                    
-                    # 統計更新
-                    self._update_rag_stats(rag_result, response_time)
-                    
-                    # 応答内容の決定
-                    if isinstance(rag_result, dict):
-                        resp = rag_result.get('content', 'すみません、適切な回答が見つかりませんでした。')
-                        if not resp or resp.strip() == '':
-                            resp = f"「{user_utt}」についてお答えします。藤江研究室は音声対話技術の研究を行っています。"
+                    # RAGResponseChatGPTが利用可能な場合はChatGPT経由で応答生成
+                    if hasattr(self, 'rag_response_chatgpt') and self.rag_response_chatgpt:
+                        try:
+                            print(f"[DEBUG] RAGResponseChatGPT実行開始: '{user_utt}'")
+                            print(f"[DEBUG] プロンプト設定: {list(self.prompts.keys())}")
+                            print(f"[DEBUG] ChatGPTモデル: {self.config.get('ChatGPT', {}).get('response_generation_model', 'unknown')}")
+                            
+                            # RAG応答生成器を作成して応答を処理
+                            from rag_llm import RAGResponseGenerator
+                            print(f"[DEBUG] RAGResponseGenerator作成中...")
+                            rag_generator = RAGResponseGenerator(
+                                config=self.config,
+                                asr_timestamp=time.time(),
+                                query=user_utt,
+                                dialogue_history=self.dialogue_history[-self.history_length:],
+                                prompts=self.prompts,
+                                rag_retriever=self.rag_retriever
+                            )
+                            print(f"[DEBUG] RAGResponseGenerator作成完了")
+                            
+                            # 応答を生成して送信
+                            response_parts = []
+                            full_response = ""
+                            response_count = 0
+                            max_response_parts = 20  # 無限ループ防止
+                            
+                            print(f"[DEBUG] 応答生成開始...")
+                            for response_part in rag_generator:
+                                response_count += 1
+                                if response_count > max_response_parts:
+                                    print(f"[WARNING] 応答部分数が上限({max_response_parts})に達しました。応答を終了します。")
+                                    break
+                                
+                                response_parts.append(response_part)
+                                print(f"[DEBUG] 応答パート受信: {response_part}")
+                                
+                                # 応答フラグメントを送信
+                                if 'phrase' in response_part:
+                                    phrase = response_part['phrase']
+                                    if phrase.strip():
+                                        full_response += phrase + " "
+                                        snd_iu = self.createIU(phrase, 'dialogue', RemdisUpdateType.ADD)
+                                        print('OUT(dialogue):', end='')
+                                        self.printIU(snd_iu, flush=True)
+                                        self.publish(snd_iu, 'dialogue')
+                                        
+                                        # 応答完了のチェック
+                                        if any(end_marker in phrase for end_marker in ['。', '！', '？', '.']):
+                                            print(f"[DEBUG] 応答完了マーカーを検出: {phrase}")
+                                            break
+                            
+                            # 対話履歴を更新
+                            if full_response.strip():
+                                self._update_dialogue_history(user_utt, full_response.strip())
+                            
+                            print(f"[DEBUG] RAG応答生成完了: {len(response_parts)}個の応答部分を生成")
+                            
+                        except Exception as e:
+                            print(f"[ERROR] RAGResponseChatGPT実行エラー: {e}")
+                            import traceback
+                            traceback.print_exc()
+                            # フォールバック: 直接RAG検索結果を使用
+                            print(f"[DEBUG] フォールバック処理に移行")
+                            self._fallback_rag_response(user_utt)
+                            return  # エラー後は処理を終了
                     else:
-                        resp = str(rag_result)
-                    
-                    # 応答送信
-                    snd_iu = self.createIU(resp, 'dialogue', RemdisUpdateType.ADD)
-                    print('OUT(dialogue):', end='')
-                    self.printIU(snd_iu, flush=True)
-                    self.publish(snd_iu, 'dialogue')
+                        print(f"[DEBUG] RAGResponseChatGPTが利用できません - フォールバック処理")
+                        # RAGResponseChatGPTが利用できない場合はフォールバック
+                        self._fallback_rag_response(user_utt)
                 else:
                     # 空の発話の場合
-                    resp = "何かご質問はありますか？"
+                    resp = "ご質問をどうぞ。"
                     snd_iu = self.createIU(resp, 'dialogue', RemdisUpdateType.ADD)
                     print('OUT(dialogue):', end='')
                     self.printIU(snd_iu, flush=True)
@@ -253,7 +446,7 @@ class RAGDialogue(RemdisModule):
                 self.user_utterance_buffer = []
             else:
                 # バッファが空の場合
-                resp = "何かご質問はありますか？"
+                resp = "ご質問をどうぞ。"
                 snd_iu = self.createIU(resp, 'dialogue', RemdisUpdateType.ADD)
                 print('OUT(dialogue):', end='')
                 self.printIU(snd_iu, flush=True)
@@ -265,6 +458,144 @@ class RAGDialogue(RemdisModule):
             if self.user_utterance_buffer:
                 removed = self.user_utterance_buffer.pop()
                 print(f"発話を取り消しました: '{removed}'")
+    
+    def _fallback_rag_response(self, user_utt: str):
+        """フォールバック用のRAG応答生成（簡易ChatGPT統合付き）"""
+        try:
+            print(f"[DEBUG] フォールバック処理開始: '{user_utt}'")
+            
+            # RAG検索実行
+            start_time = time.time()
+            rag_result = self.rag_retriever.retrieve(user_utt)
+            response_time = time.time() - start_time
+            print(f"[DEBUG] RAG検索結果: {rag_result}")
+            
+            # 統計更新
+            self._update_rag_stats(rag_result, response_time)
+            
+            # RAG情報を取得
+            rag_content = ""
+            if isinstance(rag_result, dict):
+                rag_content = rag_result.get('content', '')
+            else:
+                rag_content = str(rag_result)
+            
+            if not rag_content or rag_content.strip() == '':
+                rag_content = f"「{user_utt}」について調べましたが、具体的な情報が見つかりませんでした。"
+            
+            print(f"[DEBUG] RAG情報: {rag_content[:100]}...")
+            
+            # システムプロンプトの作成
+            system_prompt = f"""あなたは藤江研究室のAIです。30文字以内で簡潔に回答してください。
+
+参考情報: {rag_content[:100]}
+質問: {user_utt}
+
+要求:
+1. 30文字以内で回答
+2. 簡潔で分かりやすく
+3. 敬語は最小限に"""
+            
+            # 簡易ChatGPT統合を試行
+            try:
+                import openai
+                api_key = self.config.get('ChatGPT', {}).get('api_key')
+                if api_key:
+                    print(f"[DEBUG] OpenAI API使用してRAG情報をChatGPTで処理")
+                    
+                    # OpenAI APIライブラリのバージョンに応じて適切な方法を使用
+                    try:
+                        # 新しいAPI (v1.0+) を試行
+                        if hasattr(openai, 'OpenAI'):
+                            client = openai.OpenAI(api_key=api_key)
+                            
+                            response = client.chat.completions.create(
+                                model=self.config.get('ChatGPT', {}).get('response_generation_model', 'gpt-4.1-nano-2025-04-14'),
+                                messages=[
+                                    {"role": "system", "content": system_prompt}
+                                ],
+                                max_tokens=self.config.get('ChatGPT', {}).get('max_tokens', 32),
+                                temperature=0.7
+                            )
+                            
+                            resp = response.choices[0].message.content.strip()
+                            print(f"[DEBUG] ChatGPT応答 (新API): {resp}")
+                        else:
+                            # 古いAPI (v0.x) を使用
+                            openai.api_key = api_key
+                            
+                            response = openai.ChatCompletion.create(
+                                model=self.config.get('ChatGPT', {}).get('response_generation_model', 'gpt-4.1-nano-2025-04-14'),
+                                messages=[
+                                    {"role": "system", "content": system_prompt}
+                                ],
+                                max_tokens=self.config.get('ChatGPT', {}).get('max_tokens', 32),
+                                temperature=0.7
+                            )
+                            
+                            resp = response.choices[0].message.content.strip()
+                            print(f"[DEBUG] ChatGPT応答 (旧API): {resp}")
+                    except Exception as api_error:
+                        print(f"[DEBUG] API呼び出しエラー: {api_error}")
+                        raise api_error
+                else:
+                    raise Exception("OpenAI APIキーが設定されていません")
+                    
+            except Exception as chatgpt_error:
+                print(f"[DEBUG] ChatGPT処理失敗: {chatgpt_error}")
+                # ChatGPTが失敗した場合、簡潔な応答を生成（32文字以内）
+                if "こんにちは" in user_utt or "hello" in user_utt.lower():
+                    resp = "こんにちは！藤江研究室です。"
+                elif rag_content and len(rag_content.strip()) > 0:
+                    # RAG情報を要約して簡潔にする（32文字以内）
+                    content_summary = rag_content[:20].replace('\n', ' ').strip()
+                    if content_summary:
+                        resp = f"{content_summary}について研究しています。"[:30]
+                    else:
+                        resp = "音声対話技術を研究しています。"
+                else:
+                    resp = "申し訳ございません。"
+            
+            # 応答送信
+            snd_iu = self.createIU(resp, 'dialogue', RemdisUpdateType.ADD)
+            print('OUT(dialogue):', end='')
+            self.printIU(snd_iu, flush=True)
+            self.publish(snd_iu, 'dialogue')
+            
+            # 対話履歴を更新
+            self._update_dialogue_history(user_utt, resp)
+            
+        except Exception as e:
+            print(f"[ERROR] フォールバック応答生成エラー: {e}")
+            import traceback
+            traceback.print_exc()
+            # 最終フォールバック
+            resp = "申し訳ございませんが、システムエラーが発生しました。"
+            snd_iu = self.createIU(resp, 'dialogue', RemdisUpdateType.ADD)
+            print('OUT(dialogue):', end='')
+            self.printIU(snd_iu, flush=True)
+            self.publish(snd_iu, 'dialogue')
+    
+    def _update_dialogue_history(self, user_utterance: str, system_response: str):
+        """対話履歴を更新"""
+        # ユーザー発話を追加
+        self.dialogue_history.append({
+            'role': 'user',
+            'content': user_utterance,
+            'timestamp': time.time()
+        })
+        
+        # システム応答を追加
+        self.dialogue_history.append({
+            'role': 'assistant',
+            'content': system_response,
+            'timestamp': time.time()
+        })
+        
+        # 履歴長制限
+        max_history = self.history_length * 2  # ユーザーとシステムのペアで計算
+        if len(self.dialogue_history) > max_history:
+            self.dialogue_history = self.dialogue_history[-max_history:]
     
     def _initialize_fallback(self, pub_exchanges, sub_exchanges, kwargs):
         """フォールバック初期化（既存モジュールが利用できない場合）"""
@@ -308,72 +639,6 @@ class RAGDialogue(RemdisModule):
         })()
         
         self._is_running = True
-    
-    def _initialize_rag_components(self):
-        """RAG関連コンポーネントの初期化"""
-        try:
-            # RAG機能の有効/無効チェック
-            if not self.rag_enabled:
-                print("RAG機能は無効化されています")
-                self.rag_retriever = None
-                self.data_collector = None
-                return
-            
-            # RAG検索エンジン初期化（既に初期化済み）
-            print("RAG検索エンジンが利用可能です")
-            
-            # 初期データ収集（バックグラウンドで実行）
-            if self.data_collector:
-                self._start_initial_data_collection()
-            
-            print("RAG機能を有効化しました")
-            
-        except Exception as e:
-            print(f"RAG初期化エラー: {e}")
-            self.rag_enabled = False
-            self.rag_retriever = None
-            self.data_collector = None
-    
-    def _start_initial_data_collection(self):
-        """初期データ収集をバックグラウンドで開始"""
-        def collect_initial_data():
-            try:
-                print("初期データ収集を開始...")
-                print("藤江研究室のウェブサイトから情報を収集しています...")
-                
-                # ウェブサイトからデータを収集
-                documents = self.data_collector.collect_website_data(max_pages=10)
-                
-                if documents and self.rag_retriever:
-                    # ChromaDBに文書を追加
-                    success = self.rag_retriever.add_documents(documents)
-                    if success:
-                        self.rag_stats['knowledge_base_size'] = len(documents)
-                        print(f"初期データ収集完了: {len(documents)}件の文書を知識ベースに追加")
-                        
-                        # 収集した文書のサンプルを表示
-                        print("収集した文書の例:")
-                        for i, doc in enumerate(documents[:3]):  # 最初の3件のみ
-                            title = doc.get('title', '無題')
-                            source = doc.get('source', 'unknown')
-                            content_preview = doc.get('content', '')[:100] + '...'
-                            print(f"  {i+1}. {title} (from: {source})")
-                            print(f"      {content_preview}")
-                        
-                        print("RAGシステムで藤江研究室のウェブサイト情報が利用可能になりました。")
-                    else:
-                        print("文書の追加に失敗しました。基本知識ベースを使用します。")
-                else:
-                    print("初期データ収集: 有効な文書が見つかりませんでした")
-                    print("モック知識ベースを使用します")
-                        
-            except Exception as e:
-                print(f"初期データ収集エラー: {e}")
-                print("モック知識ベースを使用します")
-        
-        # バックグラウンドスレッドで実行
-        thread = threading.Thread(target=collect_initial_data, daemon=True)
-        thread.start()
     
     def run(self):
         """メインループ - RAG対話システムの実行"""
@@ -537,7 +802,25 @@ class RAGDialogue(RemdisModule):
     def _generate_rag_response(self, user_utterance: str, input_iu: dict):
         """RAG機能を使った応答生成"""
         try:
-            # RAG検索実行
+            print(f"処理する発話: '{user_utterance}'")
+            
+            # RAGResponseChatGPTが利用可能な場合
+            if hasattr(self, 'rag_response_chatgpt') and self.rag_response_chatgpt:
+                # RAGResponseChatGPTを使用してChatGPT経由で応答生成
+                try:
+                    self.rag_response_chatgpt.run(
+                        asr_timestamp=time.time(),
+                        user_utterance=user_utterance,
+                        dialogue_history=self.dialogue_history[-self.history_length:],
+                        last_asr_iu_id=input_iu.get('id'),
+                        parent_llm_buffer=self.llm_buffer
+                    )
+                    return
+                except Exception as e:
+                    print(f"RAGResponseChatGPT実行エラー: {e}")
+                    # フォールバックに進む
+            
+            # フォールバック: 直接RAG検索結果を使用
             if self.rag_enabled and self.rag_retriever:
                 start_time = time.time()
                 rag_result = self.rag_retriever.retrieve(user_utterance)
@@ -546,21 +829,27 @@ class RAGDialogue(RemdisModule):
                 # 統計更新
                 self._update_rag_stats(rag_result, response_time)
                 
+                # レスポンス内容を取得
+                if rag_result and rag_result.get('content'):
+                    response_content = rag_result['content']
+                else:
+                    response_content = "申し訳ございませんが、関連する情報が見つかりませんでした。"
+                
+                # 即座に応答を送信
+                response_iu = self.createIU(response_content, 'dialogue', RemdisUpdateType.ADD)
+                print('OUT(dialogue):', end='')
+                self.printIU(response_iu, flush=True)
+                self.publish(response_iu, 'dialogue')
+                
                 # デバッグ情報送信
                 self._send_rag_debug_info(user_utterance, rag_result)
             else:
-                rag_result = {"level": 3, "type": "general", "content": "", "confidence": 0.3}
-            
-            # RAG対応LLMで応答生成
-            if self.rag_enabled and self.rag_retriever:
-                llm = RAGResponseChatGPT(self.config, self.prompts, self.rag_retriever)
-            else:
-                # フォールバック
-                llm = self._create_minimal_llm()
-            
-            # LLMバッファに追加
-            if hasattr(self, 'llm_buffer'):
-                self.llm_buffer.put(llm)
+                # RAGが無効な場合のフォールバック
+                fallback_response = "こんにちは、藤江研究室です。お手伝いできることがあれば教えてください。"
+                response_iu = self.createIU(fallback_response, 'dialogue', RemdisUpdateType.ADD)
+                print('OUT(dialogue):', end='')
+                self.printIU(response_iu, flush=True)
+                self.publish(response_iu, 'dialogue')
             
         except Exception as e:
             print(f"RAG応答生成エラー: {e}")
@@ -744,14 +1033,30 @@ def main():
             import yaml
             with open(config_path, 'r', encoding='utf-8') as f:
                 config = yaml.safe_load(f) or {}
+                print(f"[DEBUG] config.yaml読み込み後のChatGPT設定: {config.get('ChatGPT', {})}")
         
         # API設定ファイルの読み込み
         if os.path.exists(api_config_path):
             import yaml
             with open(api_config_path, 'r', encoding='utf-8') as f:
                 api_config = yaml.safe_load(f) or {}
-                # API設定をメイン設定にマージ
-                config.update(api_config)
+                print(f"[DEBUG] api_config.yaml内容: {api_config}")
+                
+                # API設定を適切にマージ（重要な設定を保護）
+                for key, value in api_config.items():
+                    if key in config:
+                        if isinstance(config[key], dict) and isinstance(value, dict):
+                            # 辞書の場合は既存の設定を保護してマージ
+                            for sub_key, sub_value in value.items():
+                                config[key][sub_key] = sub_value
+                        else:
+                            config[key] = value
+                    else:
+                        config[key] = value
+                
+                print(f"[DEBUG] 保護的マージ後のChatGPT設定: {config.get('ChatGPT', {})}")
+        else:
+            print("[DEBUG] api_config.yamlが存在しません")
         
         # デフォルト設定の補完
         if 'RAG' not in config:
@@ -759,9 +1064,31 @@ def main():
         if 'DIALOGUE' not in config:
             config['DIALOGUE'] = {'history_length': 10}
         if 'ChatGPT' not in config:
-            config['ChatGPT'] = {'prompts': {}}
+            config['ChatGPT'] = {
+                'prompts': {
+                    'RESP': 'prompt/rag_system.txt',
+                    'TO': 'prompt/time_out.txt'
+                },
+                'max_tokens': 32,
+                'max_message_num_in_context': 4,
+                'response_generation_model': 'gpt-4.1-nano-2025-04-14'
+            }
+        else:
+            # ChatGPT設定が存在する場合、不足している項目を補完
+            chatgpt_config = config['ChatGPT']
+            if 'max_tokens' not in chatgpt_config:
+                chatgpt_config['max_tokens'] = 32
+            if 'max_message_num_in_context' not in chatgpt_config:
+                chatgpt_config['max_message_num_in_context'] = 4
+            if 'response_generation_model' not in chatgpt_config:
+                chatgpt_config['response_generation_model'] = 'gpt-4.1-nano-2025-04-14'
         
         print(f"設定読み込み完了: ChatGPT APIキー = {'設定済み' if config.get('ChatGPT', {}).get('api_key') else '未設定'}")
+        print(f"ChatGPT設定確認:")
+        print(f"  - モデル: {config.get('ChatGPT', {}).get('response_generation_model', 'unknown')}")
+        print(f"  - max_tokens: {config.get('ChatGPT', {}).get('max_tokens', 'unknown')}")
+        print(f"  - max_message_num_in_context: {config.get('ChatGPT', {}).get('max_message_num_in_context', 'unknown')}")
+        print(f"  - prompts: {config.get('ChatGPT', {}).get('prompts', {})}")
         
         # RAG対話システム起動
         rag_dialogue = RAGDialogue(config=config)
