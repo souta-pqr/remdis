@@ -37,3 +37,7 @@ config/*.json
 # その他のプロジェクト固有の除外ファイル
 *.log
 .DS_Store
+
+# chromadb関連
+modules/data/
+modules/test_data/
