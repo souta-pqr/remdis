@@ -354,16 +354,84 @@ class FujielabDataCollector:
         return False
     
     def _create_mock_documents(self, url: str) -> List[Dict[str, Any]]:
-        """テスト用のモック文書を作成"""
-        return [{
-            'content': f'モック文書: {url} からの内容。藤江研究室に関する情報。',
-            'source': url,
+        """テスト用のモック文書を作成（藤江研究室の詳細情報）"""
+        
+        # URLに基づいて異なる内容を生成
+        mock_documents = []
+        
+        if 'fujielab.org' in url or url.endswith('/'):
+            # メインページ
+            mock_documents.append({
+                'content': '''藤江研究室（fujielab）は音声言語処理技術の研究開発を行う研究室です。
+                千葉工業大学先進工学部未来ロボティクス学科に所属し、藤江真也教授が主宰しています。
+                
+                主な研究分野：
+                - 音声認識技術の高精度化
+                - 自然言語処理による意味理解
+                - 対話システムの自然性向上
+                - マルチモーダル対話インターフェース
+                - Remdisフレームワークによる対話システム開発
+                
+                研究室では学部生から博士課程まで様々な学生が研究に取り組んでおり、
+                産学連携プロジェクトも積極的に推進しています。''',
+                'source': url,
+                'timestamp': time.time(),
+                'level': 1,
+                'title': '藤江研究室 - トップページ',
+                'section': 'home',
+                'chunk_id': 0
+            })
+            
+        # 研究内容ページ
+        mock_documents.append({
+            'content': '''音声対話技術の研究：
+            
+            当研究室では次世代の音声対話システムの実現を目指しています。
+            従来の音声認識技術を超えて、人間らしい自然な対話を可能にする
+            技術の研究開発に取り組んでいます。
+            
+            主要プロジェクト：
+            - リアルタイム音声対話システム
+            - 感情を理解する対話AI
+            - マルチモーダル情報統合
+            - ロバスト音声認識
+            
+            Remdisフレームワーク：
+            モジュラー設計による柔軟な対話システム開発環境を提供し、
+            研究から実用化まで幅広い用途に対応しています。''',
+            'source': url + '/research',
             'timestamp': time.time(),
-            'level': 2,
-            'title': 'モック文書',
-            'section': 'test',
-            'chunk_id': 0
-        }]
+            'level': 1,
+            'title': '研究内容 - 音声対話技術',
+            'section': 'research',
+            'chunk_id': 1
+        })
+        
+        # メンバー情報
+        mock_documents.append({
+            'content': '''研究室メンバー：
+            
+            教員：
+            - 藤江真也教授：音声言語処理、対話システム、自然言語処理を専門とし、
+              20年以上の研究経験を持つ。多数の国際会議での発表実績があります。
+            
+            学生：
+            - 博士課程学生：先進的な研究テーマに取り組む
+            - 修士課程学生：実用的な技術開発を担当
+            - 学部生：基礎研究から実践まで幅広く学習
+            
+            研究室では定期的にセミナーや勉強会を開催し、
+            最新の技術動向について議論しています。
+            また、他大学との共同研究や企業との連携プロジェクトも推進しています。''',
+            'source': url + '/members',
+            'timestamp': time.time(),
+            'level': 1,
+            'title': 'メンバー紹介',
+            'section': 'members',
+            'chunk_id': 2
+        })
+        
+        return mock_documents
     
     def get_stats(self) -> Dict[str, Any]:
         """収集統計を取得"""

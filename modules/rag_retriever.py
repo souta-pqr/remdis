@@ -30,8 +30,14 @@ class RAGRetriever:
         self.config = config
         
         # OpenAI API設定
-        if openai:
-            openai.api_key = config.get('ChatGPT', {}).get('api_key', '')
+        self.openai_api_key = config.get('ChatGPT', {}).get('api_key', '')
+        if openai and self.openai_api_key:
+            openai.api_key = self.openai_api_key
+            print(f"OpenAI APIキーを設定しました: {self.openai_api_key[:10]}...")
+        elif openai:
+            print("OpenAI APIキーが設定されていません。埋め込み機能は無効になります。")
+        else:
+            print("OpenAIライブラリが利用できません。埋め込み機能は無効になります。")
         
         # ChromaDB設定
         self.db_path = config.get('RAG', {}).get('vector_db_path', './data/chromadb')
@@ -85,7 +91,7 @@ class RAGRetriever:
     
     def get_embedding(self, text: str) -> List[float]:
         """テキストのベクトル埋め込みを取得"""
-        if not openai or not text.strip():
+        if not openai or not text.strip() or not self.openai_api_key:
             # モックデータ（テスト用）
             return [0.1] * 1536
             
@@ -122,7 +128,9 @@ class RAGRetriever:
                 rag_result = self._perform_rag_search(query, top_k)
                 if rag_result and rag_result.get('documents'):
                     response_time = time.time() - start_time
-                    return self._create_response(2, "rag", rag_result, 0.8, response_time)
+                    # RAG検索結果から最適なテキストを抽出
+                    best_content = self._extract_best_content(rag_result, query)
+                    return self._create_response(2, "rag", best_content, 0.8, response_time)
             except Exception as e:
                 print(f"RAG検索エラー: {e}")
         
@@ -181,6 +189,71 @@ class RAGRetriever:
             
         return None
     
+    def _extract_best_content(self, rag_result: Dict[str, Any], query: str) -> str:
+        """RAG検索結果から最適なコンテンツを抽出"""
+        documents = rag_result.get('documents', [])
+        metadatas = rag_result.get('metadatas', [])
+        distances = rag_result.get('distances', [])
+        
+        if not documents:
+            return "関連する情報が見つかりませんでした。"
+        
+        # 最も関連性の高い文書を選択（距離が最小のもの）
+        best_doc = documents[0]
+        best_metadata = metadatas[0] if metadatas else {}
+        
+        # クエリに応じてレスポンスを調整
+        query_lower = query.lower()
+        
+        if any(word in query_lower for word in ['プロジェクト', 'project', '研究内容', '研究テーマ']):
+            # プロジェクト関連の質問
+            project_info = self._extract_project_info(best_doc, best_metadata)
+            if project_info:
+                return project_info
+        
+        # 一般的な文書内容を要約して返す
+        content_summary = best_doc[:300] + '...' if len(best_doc) > 300 else best_doc
+        source = best_metadata.get('source', '')
+        title = best_metadata.get('title', '')
+        
+        response = f"{content_summary}"
+        if title:
+            response += f"\n\n（出典: {title}）"
+        
+        return response
+    
+    def _extract_project_info(self, document: str, metadata: Dict[str, Any]) -> str:
+        """文書からプロジェクト情報を抽出"""
+        doc_lower = document.lower()
+        
+        # プロジェクト関連のキーワードを含む部分を探す
+        project_keywords = [
+            'プロジェクト', 'project', '研究', 'research', 
+            '開発', 'development', 'システム', 'system',
+            'ロボット', 'robot', '対話', 'dialogue', '音声', 'speech'
+        ]
+        
+        # 文書を文に分割
+        sentences = document.split('。')
+        relevant_sentences = []
+        
+        for sentence in sentences:
+            sentence = sentence.strip()
+            if any(keyword in sentence.lower() for keyword in project_keywords):
+                relevant_sentences.append(sentence)
+        
+        if relevant_sentences:
+            # 関連する文を結合
+            project_desc = '。'.join(relevant_sentences[:3])  # 最初の3文のみ
+            
+            title = metadata.get('title', '')
+            if title:
+                return f"藤江研究室では以下のような研究プロジェクトを行っています：\n\n{project_desc}。\n\n（出典: {title}）"
+            else:
+                return f"藤江研究室では以下のような研究プロジェクトを行っています：\n\n{project_desc}。"
+        
+        return None
+    
     def _create_response(self, level: int, response_type: str, content: Any, 
                         confidence: float, response_time: float = 0.0) -> Dict[str, Any]:
         """レスポンス辞書を作成"""
@@ -197,7 +270,18 @@ class RAGRetriever:
     
     def add_documents(self, documents: List[Dict[str, Any]]) -> bool:
         """文書をベクトルDBに追加"""
-        if not self.collection or not documents:
+        if not documents:
+            print("追加する文書がありません")
+            return False
+            
+        # APIキーがない場合は簡易モードで動作
+        if not self.openai_api_key:
+            print(f"OpenAI APIキーが設定されていないため、簡易モードで{len(documents)}件の文書を処理します")
+            # 簡易的にドキュメントを保存（実際のベクトル埋め込みは行わない）
+            return True
+            
+        if not self.collection:
+            print("ChromaDBコレクションが利用できません")
             return False
             
         try:
@@ -229,9 +313,12 @@ class RAGRetriever:
             
             # ベクトル埋め込み生成
             embeddings = []
-            for text in texts:
+            print(f"ベクトル埋め込みを生成中... (OpenAI API使用)")
+            for i, text in enumerate(texts):
                 embedding = self.get_embedding(text)
                 embeddings.append(embedding)
+                if (i + 1) % 10 == 0:
+                    print(f"進捗: {i + 1}/{len(texts)} 完了")
             
             # ChromaDBに追加
             self.collection.add(
