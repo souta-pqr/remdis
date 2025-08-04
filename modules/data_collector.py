@@ -33,8 +33,13 @@ class FujielabDataCollector:
         
         # データソース設定
         data_sources = config.get('DATA_SOURCES', {})
+        # 収集対象URLを明示的に指定
         self.base_urls = [
-            data_sources.get('fujielab_website', 'https://www.fujielab.org/'),
+            'https://www.fujielab.org/',
+            'https://www.fujielab.org/members/',
+            'https://www.fujielab.org/works/',
+            'https://www.fujielab.org/research/',
+            'https://www.fujielab.org/for3rd/',
         ]
         
         # 収集設定
@@ -67,6 +72,21 @@ class FujielabDataCollector:
             'last_update': None
         }
     
+    def save_documents_to_file(self, documents, filename=None):
+        """収集した文書を modules/data/ ディレクトリに保存"""
+        import json
+        import os
+        if filename is None:
+            # このファイルの場所から data/collected_documents.json を絶対パスで指定
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            filename = os.path.join(base_dir, "data", "collected_documents.json")
+        dir_path = os.path.dirname(filename)
+        if dir_path and not os.path.exists(dir_path):
+            os.makedirs(dir_path)
+        with open(filename, "w", encoding="utf-8") as f:
+            json.dump(documents, f, ensure_ascii=False, indent=2)
+        print(f"Saved {len(documents)} documents to {filename}")
+    
     def _create_session(self) -> requests.Session:
         """HTTPセッションを作成"""
         if not requests:
@@ -92,56 +112,129 @@ class FujielabDataCollector:
         
         return session
     
-    def collect_website_data(self, max_pages: int = 50) -> List[Dict[str, Any]]:
-        """ウェブサイトからデータを収集"""
+    def collect_website_data(self, max_pages: int = 50, max_workers: int = 3) -> List[Dict[str, Any]]:
+        """ウェブサイトからデータを高速並列収集（内部リンク抽出を同時に行いリクエスト数削減）"""
+        import concurrent.futures
         documents = []
         visited_urls = set()
-        
+        queue_urls = []
+        lock = threading.Lock()
+        # 指定URLのみキューに追加
         for base_url in self.base_urls:
             print(f"データ収集開始: {base_url}")
-            
-            try:
-                # メインページから開始
-                page_docs = self._collect_single_page(base_url)
-                if page_docs:
-                    documents.extend(page_docs)
-                    visited_urls.add(base_url)
-                    self.stats['successful_pages'] += 1
-                else:
-                    self.stats['failed_pages'] += 1
-                
-                self.stats['total_pages'] += 1
-                
-                # サブページの収集（簡単な実装）
-                subpage_urls = self._extract_internal_links(base_url)
-                
-                for url in subpage_urls[:max_pages-1]:  # 制限
-                    if url not in visited_urls and not self._should_exclude_url(url):
-                        time.sleep(self.delay_between_requests)  # レート制限
-                        
-                        page_docs = self._collect_single_page(url)
-                        if page_docs:
-                            documents.extend(page_docs)
-                            self.stats['successful_pages'] += 1
-                        else:
-                            self.stats['failed_pages'] += 1
-                        
-                        visited_urls.add(url)
-                        self.stats['total_pages'] += 1
-                        
-                        if len(visited_urls) >= max_pages:
+            queue_urls.append(base_url)
+        try:
+            def process_url(url):
+                with lock:
+                    if url in visited_urls or self._should_exclude_url(url):
+                        return [], []
+                    visited_urls.add(url)
+                time.sleep(self.delay_between_requests)
+                page_docs, internal_links = self._collect_single_page_with_links(url)
+                with lock:
+                    if page_docs:
+                        documents.extend(page_docs)
+                        self.stats['successful_pages'] += 1
+                    else:
+                        self.stats['failed_pages'] += 1
+                    self.stats['total_pages'] += 1
+                    # 内部リンクは1階層まで（base_urlsの直下のみ）
+                    for link in set(internal_links):
+                        if link not in visited_urls and link not in queue_urls and not self._should_exclude_url(link):
+                            # 1階層まで: /xxx/ または /xxx
+                            parsed = urlparse(link)
+                            path = parsed.path
+                            if path.count('/') <= 2:
+                                queue_urls.append(link)
+                return page_docs
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = set()
+                while True:
+                    with lock:
+                        if max_pages is not None and len(visited_urls) >= max_pages:
                             break
-                            
-            except Exception as e:
-                print(f"データ収集エラー {base_url}: {e}")
-                self.stats['failed_pages'] += 1
-        
+                        if not queue_urls and not futures:
+                            break
+                        while queue_urls and len(futures) < max_workers:
+                            url = queue_urls.pop(0)
+                            future = executor.submit(process_url, url)
+                            futures.add(future)
+                    done, _ = concurrent.futures.wait(futures, timeout=2, return_when=concurrent.futures.FIRST_COMPLETED)
+                    for future in done:
+                        futures.remove(future)
+        except Exception as e:
+            print(f"データ収集エラー: {e}")
+            self.stats['failed_pages'] += 1
         self.stats['total_documents'] = len(documents)
         self.stats['last_update'] = time.time()
-        
         print(f"データ収集完了: {len(documents)}件の文書")
+        # 収集後に自動保存
+        self.save_documents_to_file(documents)
         return documents
-    
+
+    def _collect_single_page_with_links(self, url: str) -> (List[Dict[str, Any]], List[str]):
+        """ページ取得と同時に内部リンク抽出（リクエスト数削減）"""
+        if not self.session:
+            return self._create_mock_documents(url), []
+        try:
+            response = self.session.get(url, timeout=self.timeout)
+            response.raise_for_status()
+            # コンテンツサイズチェック
+            if len(response.content) > self.max_content_length:
+                print(f"コンテンツが大きすぎます: {url}")
+                return [], []
+            if not BeautifulSoup:
+                return self._create_mock_documents(url), []
+            soup = BeautifulSoup(response.content, 'html.parser')
+            metadata = self._extract_metadata(soup, url)
+            content = self._extract_content(soup)
+            if not content or len(content.strip()) < 100:
+                return [], self._extract_internal_links_from_soup(soup, url)
+            documents = self._split_content(content, metadata)
+            internal_links = self._extract_internal_links_from_soup(soup, url)
+            return documents, internal_links
+        except requests.RequestException as e:
+            print(f"HTTP エラー {url}: {e}")
+            return [], []
+        except Exception as e:
+            print(f"ページ処理エラー {url}: {e}")
+            return [], []
+
+    def _extract_internal_links_from_soup(self, soup: BeautifulSoup, base_url: str) -> List[str]:
+        """指定ページから得られる1階層までの内部リンクのみ抽出"""
+        links = set()
+        base_domain = urlparse(base_url).netloc
+        tag_attr_pairs = [
+            ('a', 'href'),
+            ('area', 'href'),
+            ('iframe', 'src'),
+        ]
+        for tag, attr in tag_attr_pairs:
+            for elem in soup.find_all(tag):
+                url = elem.get(attr)
+                if not url:
+                    continue
+                url = url.split('#')[0].split('?')[0]
+                full_url = urljoin(base_url, url)
+                parsed_url = urlparse(full_url)
+                # 同一ドメインかつHTMLページのみ
+                if parsed_url.netloc == base_domain and not re.search(r'\.(css|js|png|jpg|jpeg|gif|svg|ico|pdf|zip|mp4|mp3|json|xml)$', full_url, re.IGNORECASE):
+                    # 1階層まで: /xxx/ または /xxx
+                    path = parsed_url.path
+                    if path.count('/') <= 2:
+                        links.add(full_url)
+        # <link rel="alternate">のみ追加
+        for elem in soup.find_all('link', rel=True, href=True):
+            if elem['rel'] and 'alternate' in elem['rel']:
+                url = elem['href'].split('#')[0].split('?')[0]
+                full_url = urljoin(base_url, url)
+                parsed_url = urlparse(full_url)
+                if parsed_url.netloc == base_domain and not re.search(r'\.(css|js|png|jpg|jpeg|gif|svg|ico|pdf|zip|mp4|mp3|json|xml)$', full_url, re.IGNORECASE):
+                    path = parsed_url.path
+                    if path.count('/') <= 2:
+                        links.add(full_url)
+        return list(links)
+
     def _collect_single_page(self, url: str) -> List[Dict[str, Any]]:
         """単一ページからデータを収集"""
         if not self.session:
@@ -319,32 +412,6 @@ class FujielabDataCollector:
         
         return chunks
     
-    def _extract_internal_links(self, base_url: str) -> List[str]:
-        """内部リンクを抽出"""
-        if not self.session or not BeautifulSoup:
-            return []
-        
-        try:
-            response = self.session.get(base_url, timeout=self.timeout)
-            soup = BeautifulSoup(response.content, 'html.parser')
-            
-            links = []
-            base_domain = urlparse(base_url).netloc
-            
-            for link in soup.find_all('a', href=True):
-                href = link['href']
-                full_url = urljoin(base_url, href)
-                parsed_url = urlparse(full_url)
-                
-                # 同一ドメインのみ
-                if parsed_url.netloc == base_domain:
-                    links.append(full_url)
-            
-            return list(set(links))  # 重複除去
-            
-        except Exception as e:
-            print(f"リンク抽出エラー: {e}")
-            return []
     
     def _should_exclude_url(self, url: str) -> bool:
         """URLを除外すべきかチェック"""
@@ -353,85 +420,6 @@ class FujielabDataCollector:
                 return True
         return False
     
-    def _create_mock_documents(self, url: str) -> List[Dict[str, Any]]:
-        """テスト用のモック文書を作成（藤江研究室の詳細情報）"""
-        
-        # URLに基づいて異なる内容を生成
-        mock_documents = []
-        
-        if 'fujielab.org' in url or url.endswith('/'):
-            # メインページ
-            mock_documents.append({
-                'content': '''藤江研究室（fujielab）は音声言語処理技術の研究開発を行う研究室です。
-                千葉工業大学先進工学部未来ロボティクス学科に所属し、藤江真也教授が主宰しています。
-                
-                主な研究分野：
-                - 音声認識技術の高精度化
-                - 自然言語処理による意味理解
-                - 対話システムの自然性向上
-                - マルチモーダル対話インターフェース
-                - Remdisフレームワークによる対話システム開発
-                
-                研究室では学部生から博士課程まで様々な学生が研究に取り組んでおり、
-                産学連携プロジェクトも積極的に推進しています。''',
-                'source': url,
-                'timestamp': time.time(),
-                'level': 1,
-                'title': '藤江研究室 - トップページ',
-                'section': 'home',
-                'chunk_id': 0
-            })
-            
-        # 研究内容ページ
-        mock_documents.append({
-            'content': '''音声対話技術の研究：
-            
-            当研究室では次世代の音声対話システムの実現を目指しています。
-            従来の音声認識技術を超えて、人間らしい自然な対話を可能にする
-            技術の研究開発に取り組んでいます。
-            
-            主要プロジェクト：
-            - リアルタイム音声対話システム
-            - 感情を理解する対話AI
-            - マルチモーダル情報統合
-            - ロバスト音声認識
-            
-            Remdisフレームワーク：
-            モジュラー設計による柔軟な対話システム開発環境を提供し、
-            研究から実用化まで幅広い用途に対応しています。''',
-            'source': url + '/research',
-            'timestamp': time.time(),
-            'level': 1,
-            'title': '研究内容 - 音声対話技術',
-            'section': 'research',
-            'chunk_id': 1
-        })
-        
-        # メンバー情報
-        mock_documents.append({
-            'content': '''研究室メンバー：
-            
-            教員：
-            - 藤江真也教授：音声言語処理、対話システム、自然言語処理を専門とし、
-              20年以上の研究経験を持つ。多数の国際会議での発表実績があります。
-            
-            学生：
-            - 博士課程学生：先進的な研究テーマに取り組む
-            - 修士課程学生：実用的な技術開発を担当
-            - 学部生：基礎研究から実践まで幅広く学習
-            
-            研究室では定期的にセミナーや勉強会を開催し、
-            最新の技術動向について議論しています。
-            また、他大学との共同研究や企業との連携プロジェクトも推進しています。''',
-            'source': url + '/members',
-            'timestamp': time.time(),
-            'level': 1,
-            'title': 'メンバー紹介',
-            'section': 'members',
-            'chunk_id': 2
-        })
-        
-        return mock_documents
     
     def get_stats(self) -> Dict[str, Any]:
         """収集統計を取得"""
@@ -446,7 +434,21 @@ class FujielabDataCollector:
             'total_documents': 0,
             'last_update': None
         }
-
+    
+    # ...existing code...
+    
+    def get_all_document_details_as_string(self, documents: List[Dict[str, Any]]) -> str:
+        """全ての文書の詳細（URL・タイトル・セクション・先頭100文字）を文字列で返す"""
+        lines = ["--- All Document Details ---"]
+        for i, doc in enumerate(documents):
+            url = doc.get('source', '')
+            title = doc.get('title', '')
+            section = doc.get('section', '')
+            content = doc.get('content', '')
+            preview = content[:100].replace('\n', ' ')
+            lines.append(f"[{i}] URL: {url}\n    Title: {title}\n    Section: {section}\n    Preview: {preview}")
+        lines.append(f"--- Total: {len(documents)} documents ---")
+        return '\n'.join(lines)
 
 class DataCollectorModule(RemdisModule):
     """RemdisModule継承版のデータ収集モジュール"""

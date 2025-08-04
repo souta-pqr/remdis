@@ -311,17 +311,14 @@ class RAGDialogue(RemdisModule):
             try:
                 print("初期データ収集を開始...")
                 print("藤江研究室のウェブサイトから情報を収集しています...")
-                
-                # ウェブサイトからデータを収集
-                documents = self.data_collector.collect_website_data(max_pages=10)
-                
+                # max_pages=Noneで全ページ収集
+                documents = self.data_collector.collect_website_data(max_pages=None)
                 if documents and self.rag_retriever:
                     # ChromaDBに文書を追加
                     success = self.rag_retriever.add_documents(documents)
                     if success:
                         self.rag_stats['knowledge_base_size'] = len(documents)
                         print(f"初期データ収集完了: {len(documents)}件の文書を知識ベースに追加")
-                        
                         # 収集した文書のサンプルを表示
                         print("収集した文書の例:")
                         for i, doc in enumerate(documents[:3]):  # 最初の3件のみ
@@ -330,14 +327,12 @@ class RAGDialogue(RemdisModule):
                             content_preview = doc.get('content', '')[:100] + '...'
                             print(f"  {i+1}. {title} (from: {source})")
                             print(f"      {content_preview}")
-                        
                         print("RAGシステムで藤江研究室のウェブサイト情報が利用可能になりました。")
                     else:
                         print("文書の追加に失敗しました。基本知識ベースを使用します。")
                 else:
                     print("初期データ収集: 有効な文書が見つかりませんでした")
                     print("モック知識ベースを使用します")
-                        
             except Exception as e:
                 print(f"初期データ収集エラー: {e}")
                 print("モック知識ベースを使用します")
