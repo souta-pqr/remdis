@@ -5,8 +5,18 @@ import time
 import re
 
 from base import RemdisModule, RemdisState, RemdisUtil, RemdisUpdateType
-from llm import ResponseChatGPT
 import prompt.util as prompt_util
+
+# RAGヘルパーのインポート
+try:
+    from rag_helper import RAGHelper, load_rag_config
+    RAG_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: RAGヘルパーのインポートに失敗: {e}")
+    RAG_AVAILABLE = False
+
+# 既存のLLMインポート
+from llm import ResponseChatGPT
 
 
 class Dialogue(RemdisModule):
@@ -21,6 +31,25 @@ class Dialogue(RemdisModule):
         self.response_generation_interval = self.config['DIALOGUE']['response_generation_interval']
         self.prompts = prompt_util.load_prompts(self.config['ChatGPT']['prompts'])
 
+        # RAGヘルパーの初期化
+        self.rag_helper = None
+        if RAG_AVAILABLE:
+            try:
+                # RAG設定を含む完全な設定を読み込み
+                full_config = load_rag_config()
+                # 既存の設定とマージ
+                for key, value in full_config.items():
+                    if key not in self.config:
+                        self.config[key] = value
+                    elif isinstance(self.config[key], dict) and isinstance(value, dict):
+                        self.config[key].update(value)
+                
+                self.rag_helper = RAGHelper(self.config, self.prompts)
+                print("RAGヘルパーを初期化しました")
+            except Exception as e:
+                print(f"RAGヘルパー初期化エラー: {e}")
+                self.rag_helper = None
+        
         # 対話履歴
         self.dialogue_history = []
 
@@ -117,9 +146,8 @@ class Dialogue(RemdisModule):
                     else:
                         new_iu_count = 0
 
-                # パラレルな応答生成処理
-                # 応答がはじまったらLLM自体がbufferに格納される
-                llm = ResponseChatGPT(self.config, self.prompts)
+                # パラレルな応答生成処理（RAG統合）
+                llm = self._create_response_llm()
                 last_asr_iu_id = input_iu['id']
                 t = threading.Thread(
                     target=llm.run,
@@ -133,10 +161,20 @@ class Dialogue(RemdisModule):
 
                 # ユーザ発話終端の処理
                 if input_iu['update_type'] == RemdisUpdateType.COMMIT:
-                    # ASR_COMMITはユーザ発話が前のシステム発話より時間的に後になる場合だけ発出
-                    # if self.system_utterance_end_time < input_iu['timestamp']:
-                    #     self.event_queue.put('ASR_COMMIT')
                     iu_memory = []
+
+    def _create_response_llm(self):
+        """適切なLLMを作成（RAG機能統合）"""
+        # RAGヘルパーが利用可能な場合
+        if self.rag_helper:
+            try:
+                return self.rag_helper.create_response_llm(self.config, self.prompts)
+            except Exception as e:
+                print(f"RAG LLM作成エラー: {e}")
+                # フォールバックに進む
+        
+        # 通常のLLMを使用（元のdialogue.pyと同じ動作）
+        return ResponseChatGPT(self.config, self.prompts)
 
     # 対話状態を管理
     def state_management(self):
@@ -166,8 +204,6 @@ class Dialogue(RemdisModule):
                     self.send_backchannel()
                 if event == 'SYSTEM_TAKE_TURN':
                     self.send_response()
-                # if event == 'ASR_COMMIT':
-                #     self.send_response()
 
     # 表情・感情を管理
     def emo_act_management(self):
@@ -186,14 +222,13 @@ class Dialogue(RemdisModule):
                 self.printIU(snd_iu)
                 self.publish(snd_iu, 'dialogue2')
 
-
-    # システム発話を送信
+    # システム発話を送信（SYSTEM_TAKE_TURNのみで発話）
     def send_response(self):
         if self.llm_buffer.empty():
             # 一瞬スリープしてそれでも応答生成中にならなければシステムから発話を開始
             time.sleep(0.1)
             if self.llm_buffer.empty():
-                llm = ResponseChatGPT(self.config, self.prompts)
+                llm = self._create_response_llm()
                 t = threading.Thread(
                     target=llm.run,
                     args=(time.time(),
@@ -308,6 +343,17 @@ class Dialogue(RemdisModule):
         if len(self.dialogue_history) > self.history_length:
             self.dialogue_history.pop(0)
 
+    # RAG統計情報を取得（デバッグ用）
+    def get_rag_stats(self):
+        """RAG統計情報を取得"""
+        if self.rag_helper:
+            return self.rag_helper.get_rag_stats()
+        else:
+            return {
+                'rag_enabled': False,
+                'status': 'not_available'
+            }
+
     # デバッグ用にログを出力
     def log(self, *args, **kwargs):
         print(f"[{time.time():.5f}]", *args, flush=True, **kwargs)
@@ -318,3 +364,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+    
