@@ -419,7 +419,7 @@ class RAGResponseGenerator(ResponseGenerator):
                 chunk_count = 0
                 for chunk in self.response:
                     chunk_count += 1
-                    self.log(f"チャンク{chunk_count}を処理中")
+                    # self.log(f"チャンク{chunk_count}を処理中")
                     
                     # 新しいAPI形式での処理
                     content = ""
@@ -429,19 +429,19 @@ class RAGResponseGenerator(ResponseGenerator):
                             delta = chunk.choices[0].delta
                             content = getattr(delta, 'content', '') or ''
                             finish_reason = getattr(chunk.choices[0], 'finish_reason', None)
-                            self.log(f"新API: content='{content}', finish_reason='{finish_reason}'")
+                            # self.log(f"新API: content='{content}', finish_reason='{finish_reason}'")
                         else:
                             # 古いAPI形式での処理
                             if isinstance(chunk, dict) and chunk.get('choices') and len(chunk['choices']) > 0:
                                 delta = chunk['choices'][0].get('delta', {})
                                 content = delta.get('content', '') or ''
                                 finish_reason = chunk['choices'][0].get('finish_reason')
-                                self.log(f"旧API: content='{content}', finish_reason='{finish_reason}'")
+                                # self.log(f"旧API: content='{content}', finish_reason='{finish_reason}'")
                             else:
-                                self.log(f"不明なチャンク形式: {type(chunk)}, chunk={chunk}")
+                                # self.log(f"不明なチャンク形式: {type(chunk)}, chunk={chunk}")
                                 continue
                     except Exception as e:
-                        self.log(f"チャンク処理エラー: {e}")
+                        # self.log(f"チャンク処理エラー: {e}")
                         import traceback
                         traceback.print_exc()
                         continue
@@ -449,14 +449,14 @@ class RAGResponseGenerator(ResponseGenerator):
                     if content:
                         full_response += content
                         self._response_generated = True
-                        self.log(f"応答構築中: '{full_response}'")
+                        # self.log(f"応答構築中: '{full_response}'")
                     
                     # ストリーム終了判定
                     if finish_reason:
-                        self.log(f"ストリーム終了: finish_reason={finish_reason}")
+                        # self.log(f"ストリーム終了: finish_reason={finish_reason}")
                         break
                 
-                self.log(f"ストリーム処理完了: {chunk_count}チャンク処理、完全応答='{full_response}'")
+                # self.log(f"ストリーム処理完了: {chunk_count}チャンク処理、完全応答='{full_response}'")
                 
                 # 完全な応答が構築された場合、一度だけ返す
                 if full_response.strip():
@@ -941,4 +941,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-    

@@ -37,7 +37,7 @@ ChatGPT:
 TEXT_VAP:
  max_verbal_backchannel_num: 2
  max_nonverbal_backchannel_num: 1
- min_text_vap_threshold: 6
+ min_text_vap_threshold: 3 # debug用
  text_vap_interval: 3
 
 TIME_OUT:
