@@ -96,3 +96,4 @@ urllib3==2.2.0
 xmltodict==0.13.0
 yarl==1.9.4
 yq==3.2.3
+chromadb=1.0.20
