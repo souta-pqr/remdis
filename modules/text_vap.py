@@ -130,6 +130,8 @@ class TextVAP(RemdisModule):
 
     # テキストVAPを実行
     def run_text_vap(self, asr_timestamp, query):
+        self.log(f"***** TEXT_VAP START: query='{query}' *****")
+        
         # ChatGPTに入力するプロンプト
         messages = [
             {'role': 'user', 'content': self.prompts['BC']},
@@ -137,69 +139,80 @@ class TextVAP(RemdisModule):
             {'role': 'user', 'content': query}
         ]
         
-        # ChatGPTにプロンプトを入力してストリーミング形式で応答の生成を開始
-        self.response = openai.ChatCompletion.create(
-            model=self.model,
-            messages=messages,
-            max_tokens=self.max_tokens,
-            stream=True
-        )
+        try:
+            # ChatGPTにプロンプトを入力してストリーミング形式で応答の生成を開始
+            self.response = openai.ChatCompletion.create(
+                model=self.model,
+                messages=messages,
+                max_tokens=self.max_tokens,
+                stream=True
+            )
 
-        # ChatGPTの応答を保持しおく変数
-        current_completion_line = ""
-        nonverbal_backchannel = {}
+            # ChatGPTの応答を保持しおく変数
+            current_completion_line = ""
+            nonverbal_backchannel = {}
 
-        # ChatGPTの応答を順次パース
-        for chunk in self.response:
-            chunk_message = chunk['choices'][0]['delta']
-            if 'content' in chunk_message.keys():
-                new_token = chunk_message.get('content')
+            # ChatGPTの応答を順次パース
+            for chunk in self.response:
+                chunk_message = chunk['choices'][0]['delta']
+                if 'content' in chunk_message.keys():
+                    new_token = chunk_message.get('content')
 
-                if not new_token:
-                    continue
+                    if not new_token:
+                        continue
 
-                current_completion_line += new_token
-                current_completion_line = current_completion_line.strip()
+                    current_completion_line += new_token
+                    current_completion_line = current_completion_line.strip()
 
-                if new_token != '\n':
-                    continue
+                    if new_token != '\n':
+                        continue
 
-                # 相槌を打つかどうかの判定
-                if current_completion_line.startswith(('a', '==a')):
-                    label, content = self.parse_line_for_backchannel(current_completion_line)
-                    if label:
-                        self.log(f"***** BACKCHANNEL: {query=} {content=} *****")
-                        self.send_backchannel(asr_timestamp, {'bc': content})
+                    self.log(f"Processing line: '{current_completion_line}'")
 
-                # 表出すべき感情の判定
-                elif current_completion_line.startswith('b'):
-                    label = self.parse_line_for_expression(current_completion_line)
-                    if label:
-                        nonverbal_backchannel['expression'] = MMDAgentEXLabel.id2expression[label]
+                    # 相槌を打つかどうかの判定
+                    if current_completion_line.startswith(('a', '==a')):
+                        label, content = self.parse_line_for_backchannel(current_completion_line)
+                        if label:
+                            self.log(f"***** BACKCHANNEL: {query=} {content=} *****")
+                            self.send_backchannel(asr_timestamp, {'bc': content})
 
-                # 表出すべき動きの判定
-                elif current_completion_line.startswith('c'):
-                    label = self.parse_line_for_action(current_completion_line)
-                    if label:  
-                        nonverbal_backchannel['action'] = MMDAgentEXLabel.id2action[label]
-                    if nonverbal_backchannel:
-                        self.log(f"***** BACKCHANNEL: {query=} {nonverbal_backchannel=} *****")
-                        self.send_backchannel(asr_timestamp, nonverbal_backchannel)
+                    # 表出すべき感情の判定
+                    elif current_completion_line.startswith('b'):
+                        label = self.parse_line_for_expression(current_completion_line)
+                        if label:
+                            nonverbal_backchannel['expression'] = MMDAgentEXLabel.id2expression[label]
 
-                # 応答を確定させるかどうかの判定
-                elif current_completion_line.startswith('d'):
-                    # triggered = self.parse_line_for_text_vap(current_completion_line)
-                    # d の値を抽出してログ出力
-                    text_vap_completion = current_completion_line.strip().split(':')[-1]
-                    text_vap_score = int(text_vap_completion) if text_vap_completion.isdigit() else 0
-                    triggered = text_vap_score >= self.min_text_vap_threshold
-                    # 常にログを出力（閾値を超えた場合も超えなかった場合も）
-                    self.log(f"***** TEXT_VAP SCORE: query='{query}' score={text_vap_score} threshold={self.min_text_vap_threshold} triggered={triggered} line='{current_completion_line}' *****")
-                    if triggered:
-                        # self.log(f"***** TEXT_VAP: {query=} {current_completion_line=} *****")
-                        self.send_system_take_turn()
+                    # 表出すべき動きの判定
+                    elif current_completion_line.startswith('c'):
+                        label = self.parse_line_for_action(current_completion_line)
+                        if label:  
+                            nonverbal_backchannel['action'] = MMDAgentEXLabel.id2action[label]
+                        if nonverbal_backchannel:
+                            self.log(f"***** NONVERBAL_BACKCHANNEL: {query=} {nonverbal_backchannel=} *****")
+                            self.send_backchannel(asr_timestamp, nonverbal_backchannel)
 
-                current_completion_line = ""
+                    # 応答を確定させるかどうかの判定
+                    elif current_completion_line.startswith('d'):
+                        # d の値を抽出してログ出力
+                        text_vap_completion = current_completion_line.strip().split(':')[-1]
+                        text_vap_score = int(text_vap_completion) if text_vap_completion.isdigit() else 0
+                        triggered = text_vap_score >= self.min_text_vap_threshold
+                        
+                        # 常にログを出力（閾値を超えた場合も超えなかった場合も）
+                        self.log(f"***** TEXT_VAP SCORE: query='{query}' score={text_vap_score} threshold={self.min_text_vap_threshold} triggered={triggered} line='{current_completion_line}' *****")
+                        
+                        if triggered:
+                            self.log(f"***** SENDING SYSTEM_TAKE_TURN *****")
+                            self.send_system_take_turn()
+                        else:
+                            self.log(f"***** THRESHOLD NOT MET - NO SYSTEM TURN *****")
+
+                    current_completion_line = ""
+
+        except Exception as e:
+            self.log(f"***** TEXT_VAP ERROR: {e} *****")
+            import traceback
+            traceback.print_exc()
 
     # バックチャネルを送信
     def send_backchannel(self, asr_timestamp, content):
@@ -214,6 +227,7 @@ class TextVAP(RemdisModule):
                     self.sent_verbal_backchannel_counter += 1
                     triggered = True
                     exchange = 'bc'
+                    self.log(f"***** SENDING VERBAL BACKCHANNEL: {content} *****")
             elif 'expression' in content or 'action' in content:
                 if (self.last_nonverbal_backchannel_timestamp < asr_timestamp
                     and self.is_listening
@@ -222,17 +236,23 @@ class TextVAP(RemdisModule):
                     self.sent_nonverbal_backchannel_counter += 1
                     triggered = True
                     exchange = 'emo_act'
+                    self.log(f"***** SENDING NONVERBAL BACKCHANNEL: {content} *****")
 
             if triggered:
                 snd_iu = self.createIU(content, exchange, RemdisUpdateType.ADD)
                 self.printIU(snd_iu)
                 self.publish(snd_iu, exchange)
+            else:
+                self.log(f"***** BACKCHANNEL NOT SENT: conditions not met *****")
     
     # システム発話の開始を送信
     def send_system_take_turn(self):
-        snd_iu = self.createIU('SYSTEM_TAKE_TURN', 'str', RemdisUpdateType.COMMIT)
+        self.log(f"***** CREATING SYSTEM_TAKE_TURN MESSAGE *****")
+        snd_iu = self.createIU('SYSTEM_TAKE_TURN', 'vap', RemdisUpdateType.COMMIT)
+        self.log(f"***** PUBLISHING TO VAP CHANNEL *****")
         self.printIU(snd_iu)
         self.publish(snd_iu, 'vap')
+        self.log(f"***** SYSTEM_TAKE_TURN SENT SUCCESSFULLY *****")
                             
     # メッセージ受信用コールバック関数
     def callback_asr(self, ch, method, properties, in_msg):
@@ -241,7 +261,7 @@ class TextVAP(RemdisModule):
 
     # デバッグ用のログを出力
     def log(self, *args, **kwargs):
-        print(f"[{time.time():.5f}]", *args, flush=True, **kwargs)
+        print(f"[TEXT_VAP-{time.time():.5f}]", *args, flush=True, **kwargs)
 
 
 def main():
@@ -251,3 +271,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+    

@@ -570,6 +570,10 @@ class RAGResponseChatGPT(ResponseChatGPT):
             
             print(f"RAGResponseChatGPT実行開始: '{user_utterance}', モデル={self.model}")
             
+            # 自身をDialogueモジュールが持つLLMバッファに追加（重要！）
+            self.user_utterance = user_utterance
+            self.asr_time = asr_timestamp
+            
             # RAG応答生成器を作成
             rag_generator = RAGResponseGenerator(
                 config=self.config,
@@ -580,17 +584,13 @@ class RAGResponseChatGPT(ResponseChatGPT):
                 rag_retriever=self.rag_retriever
             )
             
-            # 応答を生成してバッファに送信
+            # 応答を生成してself.responseに設定
             response_parts = []
             for response_part in rag_generator:
                 response_parts.append(response_part)
-                
-                # 親のLLMバッファに送信
-                if parent_llm_buffer:
-                    try:
-                        parent_llm_buffer.put(response_part)
-                    except Exception as e:
-                        print(f"LLMバッファ送信エラー: {e}")
+            
+            # dialogue.pyが期待する形式で応答を設定
+            self.response = iter(response_parts)
             
             # 成功統計を更新
             if response_parts:
@@ -599,6 +599,9 @@ class RAGResponseChatGPT(ResponseChatGPT):
             else:
                 print(f"[WARNING] 応答部分が生成されませんでした")
             
+            # 自身をバッファに追加
+            parent_llm_buffer.put(self)
+            
         except Exception as e:
             self.usage_stats['error_count'] += 1
             print(f"RAGResponseChatGPT実行エラー: {e}")
@@ -606,12 +609,13 @@ class RAGResponseChatGPT(ResponseChatGPT):
             traceback.print_exc()
             
             # エラー時のフォールバック応答
+            self.user_utterance = user_utterance or ''
+            self.asr_time = asr_timestamp
             fallback_response = self._create_fallback_response(asr_timestamp, user_utterance, dialogue_history)
-            if parent_llm_buffer:
-                try:
-                    parent_llm_buffer.put(fallback_response)
-                except Exception as buffer_error:
-                    print(f"フォールバック応答送信エラー: {buffer_error}")
+            self.response = iter([fallback_response])
+            
+            # エラー時もバッファに追加
+            parent_llm_buffer.put(self)
     
     def _create_fallback_response(self, asr_timestamp: float, user_utterance: Optional[str], 
                                 dialogue_history: List[Dict]):
